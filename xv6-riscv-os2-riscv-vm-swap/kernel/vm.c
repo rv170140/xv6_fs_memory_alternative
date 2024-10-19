@@ -100,6 +100,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
+
   return &pagetable[PX(0, va)];
 }
 
@@ -185,8 +186,11 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
+      if((*pte & PTE_M) == 0)
+        {
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
+      }
     }
     *pte = 0;
   }
@@ -249,6 +253,8 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
   return newsz;
 }
 
+
+
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
@@ -309,7 +315,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  char *mem, shared;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -318,13 +324,24 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
-    }
+   shared = ((flags & PTE_M));
+    if(shared==0 )
+      {
+    	if((mem = kalloc()) == 0)
+      		goto err;
+    	memmove(mem, (char*)pa, PGSIZE);
+   		if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+      		kfree(mem);
+      		goto err;
+    		}
+      }
+    else
+      {
+      if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+
+      		goto err;
+    		}
+      }
   }
   return 0;
 

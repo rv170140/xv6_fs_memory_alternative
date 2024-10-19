@@ -6,8 +6,18 @@
 #include "proc.h"
 #include "defs.h"
 #include "elf.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
+struct segment_meta
+{
+  void * pg_pointer;
+  uint64 page_count;
+};
 
-static int loadseg(pde_t *, uint64, struct inode *, uint, uint);
+extern struct segment_meta segment_table [NINODE][NSEGMENTS];
+
+//static int loadseg(pde_t *, uint64, struct inode *, uint, uint);
 
 int flags2perm(int flags)
 {
@@ -30,7 +40,8 @@ exec(char *path, char **argv)
   struct proghdr ph;
   pagetable_t pagetable = 0, oldpagetable;
   struct proc *p = myproc();
-
+  uint8 writable = 0;
+  
   begin_op();
 
   if((ip = namei(path)) == 0){
@@ -61,16 +72,56 @@ exec(char *path, char **argv)
       goto bad;
     if(ph.vaddr % PGSIZE != 0)
       goto bad;
+    if(ph.vaddr < sz)goto bad;
     uint64 sz1;
+    writable = flags2perm(ph.flags)&PTE_W;
+    if(ph.filesz == 0 )
+    {
+       if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz,  flags2perm(ph.flags))) == 0)
+      goto bad;
+    sz = sz1;
+    }
+   else  if(writable)
+    {
     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
       goto bad;
     sz = sz1;
-    if(loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
+    
+    // if(loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
+    //   goto bad;
+    if(copyout(pagetable,ph.vaddr,segment_table[ip->inum][i].pg_pointer,ph.filesz) == -1)
       goto bad;
+    }
+    else{ //if(!writable)
+      // for(int k = 0; k < segment_table[ip->inum][i].page_count;k++)
+      //   mappages(pagetable, ph.vaddr + k*PGSIZE, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0
+      if(!sz && ph.vaddr)
+       {
+    //    printf("dopisivanje\n");
+        if((sz1 = uvmalloc(pagetable, sz, PGROUNDDOWN(ph.vaddr)-1, flags2perm(ph.flags))) == 0)
+          goto bad;
+        sz = sz1;
+        }
+     else if((sz)&&(PGROUNDDOWN(sz) < (PGROUNDDOWN(ph.vaddr-1))))
+        {
+    //    printf("dopisivanje2\n");
+      if((sz1 = uvmalloc(pagetable, sz, PGROUNDDOWN(ph.vaddr)-1, flags2perm(ph.flags))) == 0)
+        goto bad;
+      sz = sz1;
+      }
+
+      if((uint64)segment_table[ip->inum][i].pg_pointer == 0)panic("neucitan read only segment programa");
+      if(mappages(pagetable, PGROUNDUP(ph.vaddr), ph.memsz,(uint64)segment_table[ip->inum][i].pg_pointer,PTE_M|PTE_R|PTE_U|flags2perm(ph.flags)) == -1)goto bad;
+
+
+      sz = ph.vaddr + ph.memsz;
+
+    }
   }
   iunlockput(ip);
   end_op();
   ip = 0;
+
 
   p = myproc();
   uint64 oldsz = p->sz;
@@ -131,8 +182,11 @@ exec(char *path, char **argv)
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
  bad:
+
   if(pagetable)
+    {
     proc_freepagetable(pagetable, sz);
+    }
   if(ip){
     iunlockput(ip);
     end_op();
@@ -144,23 +198,23 @@ exec(char *path, char **argv)
 // va must be page-aligned
 // and the pages from va to va+sz must already be mapped.
 // Returns 0 on success, -1 on failure.
-static int
-loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz)
-{
-  uint i, n;
-  uint64 pa;
-
-  for(i = 0; i < sz; i += PGSIZE){
-    pa = walkaddr(pagetable, va + i);
-    if(pa == 0)
-      panic("loadseg: address should exist");
-    if(sz - i < PGSIZE)
-      n = sz - i;
-    else
-      n = PGSIZE;
-    if(readi(ip, 0, (uint64)pa, offset+i, n) != n)
-      return -1;
-  }
-  
-  return 0;
-}
+//static int
+//loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz)
+//{
+//  uint i, n;
+//  uint64 pa;
+//
+//  for(i = 0; i < sz; i += PGSIZE){
+//    pa = walkaddr(pagetable, va + i);
+//    if(pa == 0)
+//      panic("loadseg: address should exist");
+//    if(sz - i < PGSIZE)
+//      n = sz - i;
+//    else
+//      n = PGSIZE;
+//    if(readi(ip, 0, (uint64)pa, offset+i, n) != n)
+//      return -1;
+//  }
+//
+//  return 0;
+//}

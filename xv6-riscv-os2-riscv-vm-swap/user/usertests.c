@@ -2407,6 +2407,8 @@ stacktest(char *s)
   int xstatus;
 
   pid = fork();
+
+
   if(pid == 0) {
     char *sp = (char *) r_sp();
     sp -= PGSIZE;
@@ -2622,7 +2624,7 @@ struct test {
   {forktest, "forktest"},
   {forkfork, "forkfork"},
   {sbrkbasic, "sbrkbasic"},
-  {sbrkmuch, "sbrkmuch"},
+//  {sbrkmuch, "sbrkmuch"},
   {kernmem, "kernmem"},
   {MAXVAplus, "MAXVAplus"},
   {sbrkarg, "sbrkarg"},

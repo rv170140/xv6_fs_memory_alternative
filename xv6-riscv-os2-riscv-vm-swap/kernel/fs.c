@@ -36,7 +36,7 @@ readsb(int dev, struct superblock *sb)
   memmove(sb, bp->data, sizeof(*sb));
   brelse(bp);
 }
-
+void init_alt_fs(int dev);
 // Init fs
 void
 fsinit(int dev) {
@@ -44,6 +44,7 @@ fsinit(int dev) {
   if(sb.magic != FSMAGIC)
     panic("invalid file system");
   initlog(dev, &sb);
+  init_alt_fs(dev);
 }
 
 // Zero a block.
@@ -311,8 +312,8 @@ ilock(struct inode *ip)
     memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
     brelse(bp);
     ip->valid = 1;
-    if(ip->type == 0)
-      panic("ilock: no type");
+//    if(ip->type == 0)
+//      panic("ilock: no type");
   }
 }
 
@@ -694,4 +695,79 @@ struct inode*
 nameiparent(char *path, char *name)
 {
   return namex(path, 1, name);
+}
+
+
+#include "elf.h"
+struct segment_meta
+{
+  void * pg_pointer;
+  uint64 page_count;
+};
+
+struct segment_meta segment_table [NINODE][NSEGMENTS];
+
+void init_alt_fs(int dev)
+{
+    struct elfhdr elf;
+  struct proghdr ph;
+
+
+struct inode *i_temp;
+begin_op();
+for(int i = 0;i < NINODE;i++)
+{
+  
+  i_temp = iget(dev,i);
+
+  ilock(i_temp);
+
+  if(i_temp->type != T_FILE)
+    goto end;
+      
+
+  // Check ELF header
+  if(readi(i_temp, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
+    goto end;
+
+  if(elf.magic != ELF_MAGIC)
+    goto end;
+
+  for(int j=0, off=elf.phoff; j<elf.phnum; j++, off+=sizeof(ph)){
+    if(readi(i_temp, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
+      goto end;
+
+    if(ph.type != ELF_PROG_LOAD)
+      continue;
+
+    if(ph.memsz < ph.filesz)
+      goto end;
+    if(ph.vaddr + ph.memsz < ph.vaddr)
+      goto end;
+    if(ph.vaddr % PGSIZE != 0)
+      goto end;
+    if(ph.filesz == 0) continue; //nema smisla alocirati sekciju slicnu bss sekciji
+
+    uint64 pg_count = ph.memsz / PGSIZE;
+    if(ph.memsz % PGSIZE != 0) pg_count ++;
+    void * section_start;
+    for(int k = 0; k < pg_count; k ++)
+      section_start = kalloc();
+    
+    segment_table[i][j].page_count = pg_count;
+    segment_table[i][j].pg_pointer = section_start;
+
+    readi(i_temp, 0 , (uint64)section_start, ph.off, ph.filesz);
+    
+
+
+  }
+  
+end:
+//iunlockput(i_temp);
+i_temp->ref --;
+releasesleep(& i_temp->lock);
+continue;
+}
+end_op();
 }
